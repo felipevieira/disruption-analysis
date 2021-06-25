@@ -1,0 +1,199 @@
+---
+title: ICs de similaridades intra e inter artista
+author: Felipe
+output:
+  html_document:
+    theme: readable
+    df_print: paged
+    code_folding: show
+    toc: yes
+  html_notebook:
+    fig_width: 7
+    theme: readable
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+library("readr")
+library("dplyr")
+library("ggplot2")
+```
+
+
+# Carregando e visualizando os dados de similaridade
+
+```{r}
+similarities = read_csv(
+  "../data/r/intra-inter-similarities-s100.csv",
+  col_types = cols(
+    song1_idx = col_integer(),
+    song2_idx = col_integer(),
+    song1_artist = col_character(),
+    song2_artist = col_character(),
+    similarity_type = col_character(),
+    similarity = col_double())
+)
+
+glimpse(similarities)
+```
+
+# Visualizando a distribuição geral das similaridades de cada tipo
+```{r}
+similarities %>%
+  ggplot(aes(x=similarity)) +
+  facet_wrap(~ similarity_type, ncol=1) +
+  geom_histogram(binwidth=0.02, boundary=0)
+
+```
+
+# Calculando intervalo de confiança para as similaridades intra-artista (i.e., músicas de um mesmo artista)
+```{r}
+intra_artist = similarities %>%
+  filter(similarity_type == "intra-artist")
+
+glimpse(intra_artist)
+
+intra_artist %>%
+  summarise(media = mean(similarity))
+```
+
+```{r}
+s <- function(d, i) {
+    sumarizado = d %>%
+        slice(i) %>%
+        summarise(do_grupo = mean(similarity))
+
+    sumarizado %>%
+      pull(do_grupo)
+}
+
+s(intra_artist, 1:(nrow(intra_artist)))
+```
+
+```{r}
+library(boot)
+library(broom)
+
+booted <- boot(data = intra_artist,
+               statistic = s,
+               R = 2000)
+
+ci_intra_artist = tidy(booted,
+              conf.level = .95,
+              conf.method = "basic",
+              conf.int = TRUE)
+
+glimpse(ci_intra_artist)
+```
+
+```{r}
+ci_intra_artist %>%
+  ggplot(aes(
+            ymin = conf.low,
+            y = statistic,
+            ymax = conf.high,
+            x = "Musicas do mesmo artista"
+        )) +
+        geom_linerange() +
+        geom_point(color = "coral", size = 2) +
+        scale_y_continuous(limits = c(0, 1)) +
+        labs(x = "", y = "Similaridades") +
+        coord_flip()
+```
+
+# Calculando intervalo de confiança para músicas de artistas diferentes (i.e., músicas de artistas diferentes)
+
+```{r}
+inter_artist = similarities %>%
+  filter(similarity_type == "inter-artist")
+
+glimpse(inter_artist)
+
+inter_artist %>%
+  summarise(media = mean(similarity))
+```
+```{r}
+library(boot)
+library(broom)
+
+booted <- boot(data = inter_artist,
+               statistic = s,
+               R = 2000)
+
+ci_inter_artist = tidy(booted,
+              conf.level = .95,
+              conf.method = "basic",
+              conf.int = TRUE)
+
+glimpse(ci_inter_artist)
+```
+```{r}
+cis = bind_rows(
+  "intra artista" = ci_intra_artist,
+  "inter artista" = ci_inter_artist,
+  .id = "similarity_type"
+)
+```
+
+```{r}
+cis %>%
+  ggplot(aes(
+            ymin = conf.low,
+            y = statistic,
+            ymax = conf.high,
+            x = similarity_type
+        )) +
+        geom_linerange() +
+        geom_point(color = "coral", size = 2) +
+        scale_y_continuous(limits = c(0.50, 0.70)) +
+        labs(x = "", y = "Similaridades entre músicas") +
+        coord_flip()
+```
+
+# Calculando intervalo de confiança da diferença das similaridades intra e inter artistas
+
+```{r}
+s <- function(d, i) {
+    agrupado = d %>%
+        slice(i) %>%
+        group_by(similarity_type) %>%
+        summarise(do_grupo = mean(similarity), .groups = "drop")
+    a = agrupado %>% filter(similarity_type == "intra-artist") %>% pull(do_grupo)
+    b = agrupado %>% filter(similarity_type == "inter-artist") %>% pull(do_grupo)
+    a - b
+}
+
+theta_c = s(similarities, 1:nrow(similarities))
+
+theta_c
+```
+
+```{r}
+booted <- boot(data = similarities,
+               statistic = s,
+               R = 2000)
+ci = tidy(booted,
+          conf.level = .95,
+          conf.method = "basic",
+          conf.int = TRUE)
+glimpse(ci)
+```
+
+```{r}
+ci %>%
+  ggplot(aes(
+            ymin = conf.low,
+            y = statistic,
+            ymax = conf.high,
+            x = ""
+        )) +
+        geom_linerange() +
+        geom_point(color = "coral", size = 3) +
+        scale_y_continuous(limits = c(0.05, 0.07)) +
+        labs(x = "", y = "Diferença na média -> (intra-artista) - (inter-artista)") +
+        coord_flip()
+```
+
+
+
