@@ -14,7 +14,7 @@ map_file_path = 'covers.csv'
 
 count = 0
 
-S3 = boto3.resource('s3', aws_access_key_id='AKIAIPDPA4RGZFHBXACA', aws_secret_access_key='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')
+S3 = boto3.resource('s3', aws_access_key_id='', aws_secret_access_key='')
 
 def upload_file(file_name, bucket, object_name=None):
     """Upload a file to an S3 bucket
@@ -30,7 +30,7 @@ def upload_file(file_name, bucket, object_name=None):
         object_name = file_name
 
     # Upload the file
-    s3_client = boto3.client('s3', aws_access_key_id='AKIAIPDPA4RGZFHBXACA', aws_secret_access_key='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')
+    s3_client = boto3.client('s3', aws_access_key_id='', aws_secret_access_key='')
     try:
         response = s3_client.upload_file(file_name, bucket, object_name, ExtraArgs={'ACL':'public-read'})
     except ClientError as e:
