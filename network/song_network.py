@@ -1,123 +1,115 @@
-import networkx as nx
-from networkx.drawing.nx_pylab import draw_networkx
 import csv
 
-from networkx.generators import directed
-from face_validity import *
-import time
-import os
+import networkx as nx
 from igraph import Graph
+from networkx.drawing.nx_pylab import draw_networkx
+from networkx.generators import directed
+
+from face_validity import *
 
 SONGS_PER_DECADE = 50
-def generate_network(list_of_features, similarity_matrix):
+WINDOW_SIZE = 1000
+def extract_disruptions(list_of_features, similarity_matrix):
     G = Graph(directed=True)
     count = 0
-    with open(list_of_features, 'r') as features:
-        all_features = features.readlines()[1:]
-        for i in range(len(all_features)):
-            song_id = all_features[i].split(",")[0]
-            G.add_vertex(name=int(song_id), index=i)
-        weights = []
-        for i in range(len(all_features)):
-            count+=1
-            print("processing entry %i" % i)
-            song_id = all_features[i].split(",")[0]
-            edges = []
-            for j in range(i, 25605):
-                if (i-1)!=(j-1):
-                    i_song_year = int(all_features[i].split(",")[3])
-                    j_song_year = int(all_features[j].split(",")[3])
-                    i_song_artist = all_features[i].split(",")[1]
-                    j_song_artist = all_features[j].split(",")[1]
-                    # We only create an edge if songs are no more than 10 years apart and
-                    # if they were sung by different artists
-                    if (j_song_year - i_song_year)  <= 10 and (i_song_artist != j_song_artist):
-                        edges.append((int(all_features[j].split(",")[0]), int(song_id)))
-                        weights.append(similarity_matrix[j, i])
-            G.add_edges(edges)
-    G.es["weight"] = weights
-    G.write_gml('network.gml')
-    return G
+    with open("disruption_statistics.csv", "w") as disruption_csv:
+        headers = ["id", "in", "out", "i", "j", "k", "disruption", "i_songs", "j_songs"]
+        writer = csv.DictWriter(disruption_csv, fieldnames=headers)
+        writer.writeheader()
+        with open(list_of_features, 'r') as features:
+            all_features = features.readlines()[1:]
+            for i in range(len(all_features)):
+                count+=1
+                print("processing entry %i" % i)
+                G = Graph(directed=True)
+                song_id = all_features[i].split(",")[0]
+                weights = []
+                edges = []
+                node_map = {}
+                focal_node = G.add_vertex(idxfilelist=song_id, idxfeaturelist=i)
+                node_map[song_id] = focal_node.index
+                # i_song_year = int(all_features[i].split(",")[3])
+                i_song_artist = all_features[i].split(",")[1]
+                for sucessor in range(i, min(i + WINDOW_SIZE + 1, len(all_features))):
+                    # sucessor_song_year = int(all_features[sucessor].split(",")[3])
+                    sucessor_song_artist = all_features[sucessor].split(",")[1]
+                    # if i_song_artist != sucessor_song_artist:
+                    successor_song_id = all_features[sucessor].split(",")[0]
+                    if not successor_song_id in node_map.keys():
+                        node = G.add_vertex(idxfilelist=successor_song_id, idxfeaturelist=sucessor)
+                        node_map[successor_song_id] = node.index
+                    for predecessor in range(max(0, i - WINDOW_SIZE), i + 1):
+                        # predecessor_song_year = int(all_features[predecessor].split(",")[3])
+                        predecessor_song_artist = all_features[predecessor].split(",")[1]
+                        if sucessor_song_artist != predecessor_song_artist:
+                            predecessor_song_id = all_features[predecessor].split(",")[0]
+                            if not predecessor_song_id in node_map.keys():
+                                node = G.add_vertex(idxfilelist=predecessor_song_id, idxfeaturelist=predecessor)
+                                node_map[predecessor_song_id] = node.index
+                            edges.append((node_map[successor_song_id], node_map[predecessor_song_id]))
+                            weights.append(similarity_matrix[sucessor, predecessor])
+                G.add_edges(edges)
+                G.es["weight"] = weights
+                write_disruption_data(
+                    writer,
+                    focal_node,
+                    get_disruption_for_node(focal_node, G, "../data/autoencoder/latent_representations-s100.csv")
+                )
 
-def get_disruption_index_for_nodes(listfiles, graph):
-    disruption_info = {}
+def write_disruption_data(writer, focal_node, data):
+    writer.writerow({
+        "id": focal_node.attributes()["idxfeaturelist"],
+        "in": data[0],
+        "out": data[1],
+        "i": data[2],
+        "j": data[3],
+        "k": data[4],
+        "disruption": data[5],
+        "i_songs": ','.join([str(s) for s in data[6]]),
+        "j_songs": ','.join([str(s) for s in data[7]])
+    })
+
+def get_disruption_for_node(focal_node, graph, listfiles):
     with open(listfiles, 'r') as list_of_files:
         song_files = list_of_files.readlines()
-        for i in range(len(song_files)):
-            print("calculating disruption for song %i" % i)
-            if i == 0:
-                continue
-            song_id = int(song_files[i].split(",")[0])
-            if graph.has_node(song_id):
-                songs_after = [int(song.split(",")[0]) for song in song_files[i+1:]]
-                song_influences = [edge[1] for edge in graph.edges(song_id)]
+        i_count = 0
+        j_count = 0
+        k_count = 0
+        i_songs = []
+        j_songs = []
+        # pra o nó sucessor ser do tipo "i" ele precisa ter uma similaridade
+        # com o nó focal 7% maior que a média das similaridades desse nó sucessor com os antecessores do nó focal
+        # 0.07 vem da validação
+        threshold = 0.07
 
-                ni = 0
-                nj = 0
-                nk = 0
+        for edge in focal_node.in_edges():
+            sucessor_node = graph.vs[edge.source]
+            edges_with_predecessors = sucessor_node.out_edges()
+            average_similarities_with_predecessors = sum([edge.attributes()["weight"] for edge in edges_with_predecessors]) / len(edges_with_predecessors)
+            similarity_with_focal_node = graph.es.find(_source=graph.vs[edge.source].index, _target=focal_node.index).attributes()["weight"]
 
-                i_songs = []
-                j_songs = []
-                for song_after in songs_after:
-                    consolidating_influence = False
-                    if graph.has_edge(song_after , song_id):
-                        for influence in song_influences:
-                            if graph.has_edge(song_after, influence):
-                                consolidating_influence = True
-                                break
-                        if consolidating_influence:
-                            j_songs.append(song_after)
-                            nj+=1
-                        else:
-                            i_songs.append(song_after)
-                            ni+=1
-                    else:
-                        for influence in song_influences:
-                            if graph.has_edge(song_after, influence):
-                                nk+=1
-                disruption_info[song_files[i]] = [graph.in_degree(song_id), graph.out_degree(song_id), ni, nj, nk, float((ni-nj)) / float((ni+nj+nk)), i_songs, j_songs] if (ni+nj+nk) > 0 else [graph.in_degree(song_id), graph.out_degree(song_id), ni, nj, nk, 0, i_songs, j_songs]
-    return disruption_info
+            diff = similarity_with_focal_node - average_similarities_with_predecessors
+            if diff >= 0 + threshold:
+                i_count+=1
+                i_songs.append(song_files[sucessor_node.attributes()["idxfeaturelist"]].split(",")[0])
+            elif diff < 0 + threshold and diff > 0 - threshold:
+                j_count+=1
+                j_songs.append(song_files[sucessor_node.attributes()["idxfeaturelist"]].split(",")[0])
+            else:
+                k_count+=1
+
+        disruption = (i_count - j_count) / (i_count + j_count + k_count) if (i_count + j_count + k_count) > 0 else 0
+        return graph.degree(focal_node.index, mode="in"), graph.degree(focal_node.index, mode="out"), i_count, j_count, k_count, disruption, i_songs, j_songs
 
 REGENERATE_NETWORK = True
 if __name__ == "__main__":
     import collections
 
-    # if REGENERATE_NETWORK:
-    features = load_features_from_file("../data/autoencoder/latent_representations.csv")
+    features = load_features_from_file("../data/autoencoder/latent_representations-s100.csv")
 
     print("calculating similarity matrix...")
     sm = similarity_matrix_by_rbf(features, gamma=0.2)
+    print(sm[9006][8981])
 
     print("generating network..")
-    g = generate_network("../data/autoencoder/latent_representations.csv", sm)
-    # else:
-    #     print("loading network...")
-    #     g = nx.readwrite.gexf.read_gexf('window 10 - different artists - 0.80/network.gexf', node_type=int)
-
-
-    # print("extracting disruption indexes...")
-    # di = get_disruption_index_for_nodes("../data/autoencoder/latent_representations.csv", g)
-
-    # sorted_x = sorted(di.items(), key=lambda kv: (kv[1][3], kv[1][0]), reverse=True)
-    # sorted_dict = collections.OrderedDict(sorted_x)
-    # print("writing disruptions to file...")
-    # with open("disruption_statistics.csv", "w") as disruption_csv:
-    #     headers = ["id", "in", "out", "i", "j", "k", "disruption", "i_songs", "j_songs"]
-    #     writer = csv.DictWriter(disruption_csv, fieldnames=headers)
-    #     writer.writeheader()
-    #     for song in sorted_dict.keys():
-    #         info = sorted_dict[song]
-    #         writer.writerow({
-    #             "id": int(song.split(",")[0]),
-    #             "in": info[0],
-    #             "out": info[1],
-    #             "i": info[2],
-    #             "j": info[3],
-    #             "k": info[4],
-    #             "disruption": info[5],
-    #             "i_songs": ','.join([str(s) for s in info[6]]),
-    #             "j_songs": ','.join([str(s) for s in info[7]])
-    #         })
-    #         # print("%s - %s" % (song.split(",")[0], sorted_dict[song]))
-    # print("saving network...")
-    # nx.write_gexf(g, "network.gexf")
+    g = extract_disruptions("../data/autoencoder/latent_representations-s100.csv", sm)
