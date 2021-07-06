@@ -2,8 +2,11 @@
 # -*- coding: utf-8 -*-
 
 from sklearn.metrics.pairwise import rbf_kernel
+from scipy import spatial
 import random
 import csv
+
+import numpy as np
 
 LATENT_DIM = 500
 
@@ -25,6 +28,27 @@ def load_features_from_file(path):
 
 def similarity_matrix_by_rbf(feature_set, gamma=None):
         return rbf_kernel(feature_set, gamma=gamma)
+
+def similarity_matrix_by_euclidean(feature_set):
+        similarities = []
+        for i in range(len(feature_set)):
+                print("computing similarity matrix, entry %i" % i)
+                i_sims = []
+                for j in range(len(feature_set)):
+                        i_sims.append(np.linalg.norm(np.array(feature_set[i]) - np.array(feature_set[j])))
+                similarities.append(np.array(i_sims))
+        return np.array(similarities)
+
+def similarity_matrix_by_cosine(feature_set):
+        similarities = []
+        for i in range(len(feature_set)):
+                print("computing similarity matrix, entry %i" % i)
+                i_sims = []
+                for j in range(len(feature_set)):
+                        i_sims.append(1 - spatial.distance.cosine(feature_set[i], feature_set[j]))
+                similarities.append(np.array(i_sims))
+        return np.array(similarities)
+
 
 def get_artist_indexes(artist_song, list_of_files):
         indexes = []
@@ -48,7 +72,7 @@ def face_validity(path_features, similarity_matrix):
         high_similarities = []
         all_features = open(path_features).readlines()[1:]
         with open(path_features) as features_file:
-                with open("../data/r/intra-inter-similarities-s100.csv", "w") as csv_file:
+                with open("../data/r/intra-inter-similarities-s100-cosine.csv", "w") as csv_file:
                         reader = csv.reader(features_file)
                         writer = csv.DictWriter(csv_file, fieldnames=["song1_idx", "song2_idx", "song1_artist", "song2_artist", "similarity_type", "similarity"])
                         writer.writeheader()
@@ -116,5 +140,6 @@ def face_validity(path_features, similarity_matrix):
 
 if __name__ == "__main__":
         features = load_features_from_file("../data/autoencoder/latent_representations-s100.csv")
-        sm = similarity_matrix_by_rbf(features, gamma=0.2)
+        sm = similarity_matrix_by_cosine(features)
+        # print(similarity_matrix_by_rbf(features, gamma=0.2))
         face_validity("../data/autoencoder/latent_representations-s100.csv", sm)

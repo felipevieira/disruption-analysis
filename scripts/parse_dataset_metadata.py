@@ -175,7 +175,7 @@ def _get_songs(dataset_path, path):
                 and (f.endswith(".mp3") or f.endswith(".wma"))]
     songs_info = []
     for audio_file in audio_files:
-        with open('remote_urls.csv') as csvfile:
+        with open('../data/misc/remote_urls.csv') as csvfile:
             fieldnames = ['file_path', 'url']
             csv_reader = csv.DictReader(csvfile, fieldnames=fieldnames)
             audio_file = audio_file.replace(dataset_path, '')
@@ -254,7 +254,7 @@ def _get_picture(path):
             break
     if len(pictures) < 1:
                 return "https://i.pinimg.com/originals/7a/fc/02/7afc0212e8007796b4577cd6f9f0e106.png"
-    with open('covers.csv') as csvfile:
+    with open('../data/misc/covers.csv') as csvfile:
             fieldnames = ['file_path', 'url']
             csv_reader = csv.DictReader(csvfile, fieldnames=fieldnames)
             for row in csv_reader:
